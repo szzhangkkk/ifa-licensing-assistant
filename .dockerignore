@@ -24,8 +24,8 @@ chroma_db.backup/
 test_*.py
 check_*.py
 
-# 重建脚本（不需要运行时的知识库重建）
-rebuild_kb*.py
+# 知识库源文档
+Agent5-Lili_cleaned.md
 
 # macOS
 .DS_Store

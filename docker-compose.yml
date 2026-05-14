@@ -25,6 +25,8 @@ services:
     environment:
       - FLASK_HOST=0.0.0.0
       - FLASK_PORT=5000
+      - MILVUS_DB_PATH=/app/milvus.db
+      - MILVUS_COLLECTION=ifa_licensing_kb
       - CHROMA_DB_PATH=/app/chroma_db
       - CHROMA_COLLECTION=ifa_licensing_kb
       # 以下从 .env 文件读取

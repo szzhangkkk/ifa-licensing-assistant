@@ -101,18 +101,20 @@ check_env() {
     echo -e "${GREEN}[✓] 配置文件已就绪${NC}"
 }
 
-check_chroma() {
-    if [ ! -d "chroma_db" ] || [ ! -f "chroma_db/chroma.sqlite3" ]; then
+check_vectordb() {
+    if [ -f "milvus.db" ]; then
+        echo -e "${GREEN}[✓] 知识库已就绪 (Milvus Lite: milvus.db)${NC}"
+    elif [ -d "chroma_db" ] && [ -f "chroma_db/chroma.sqlite3" ]; then
+        echo -e "${YELLOW}[!] 使用 ChromaDB 降级方案 (chroma_db/)，建议迁移到 Milvus: python3 rebuild_kb_v2.py${NC}"
+    else
         echo ""
-        echo -e "${RED}[错误] 知识库 (chroma_db/) 未找到!${NC}"
+        echo -e "${RED}[错误] 向量数据库未找到!${NC}"
         echo ""
-        echo "  知识库需要预先构建。如果你有源文档 (Agent5-Lili_cleaned.md)："
-        echo "    python3.12 rebuild_kb_v2.py"
+        echo "  请先构建知识库:"
+        echo "    python3 rebuild_kb_v2.py"
         echo ""
-        echo "  或者从已有部署复制 chroma_db/ 目录"
         exit 1
     fi
-    echo -e "${GREEN}[✓] 知识库已就绪${NC}"
 }
 
 check_ngrok_token() {
@@ -132,7 +134,7 @@ cmd_deploy() {
     print_banner
     check_docker
     check_env
-    check_chroma
+    check_vectordb
 
     echo ""
     echo "  部署配置:"
