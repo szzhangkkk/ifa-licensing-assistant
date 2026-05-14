@@ -107,8 +107,9 @@ class RAGEngine:
     """向量检索引擎 — 启动时预加载模型和 Milvus，ChromaDB 仅降级时导入"""
 
     # 内部文档关键词（不对外暴露的模板和流程描述）
+    # 注意: "## " 和 "功能" 太宽泛，会误杀正常知识内容，已移除
     _INTERNAL = [
-        "Agent", "功能", "## ", "【例：", "触发条件",
+        "Agent", "【例：", "触发条件",
         "核心流程", "【主动推送】", "【被动问答】", "```plain",
         "上牌小助手", "上牌申请", "欢迎语", "资料-", "IA系统",
         "开设邮箱", "合规培训", "TR协议", "缴费", "等待保监",
@@ -241,10 +242,16 @@ class RAGEngine:
         valid = []
         for hit in results[0]:
             text = (hit.get("entity", {}).get("text", "")).strip()
-            if not text or self._is_internal(text):
+            if not text:
                 continue
             ct = hit.get("entity", {}).get("chunk_type", "")
-            if ct == "template":   # 话术模板不对外暴露
+            if ct == "template":
+                # template 双重过滤：类型标记 + 关键词
+                if self._is_internal(text):
+                    continue
+                continue  # template 一律不对外
+            # text 类型是正常知识内容，仅过滤内部文档标记
+            if self._is_internal(text):
                 continue
             valid.append(text)
 
