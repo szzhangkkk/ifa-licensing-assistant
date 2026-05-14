@@ -199,8 +199,12 @@ class RAGEngine:
 
     def search(self, question: str) -> str | None:
         """检索知识库，返回匹配文本或 None"""
+        if not question or not question.strip():
+            return None
         if self._model is None:
             self._load_model()
+        if self._model is None:  # 加载失败
+            return None
         emb = self._model.encode([question], normalize_embeddings=True)[0].tolist()
 
         # Milvus 优先
@@ -210,8 +214,8 @@ class RAGEngine:
                 logger.info(f"[RAG] Milvus 命中: {result[:80]}...")
                 return f"根据知识库信息：{result[:500]}"
 
-        # ChromaDB 降级
-        result = self._search_chromadb(question)
+        # ChromaDB 降级（用同一个 embedding，保证向量空间一致）
+        result = self._search_chromadb(emb)
         if result:
             logger.info(f"[RAG] ChromaDB 降级命中: {result[:80]}...")
             return f"根据知识库信息：{result[:500]}"
@@ -224,7 +228,7 @@ class RAGEngine:
             results = self._milvus.search(
                 collection_name=self.milvus_collection,
                 data=[emb],
-                limit=5,
+                limit=10,  # 多取一些，防止 template 过滤后不够
                 output_fields=["text", "chunk_type", "module"],
             )
         except Exception as e:
@@ -246,8 +250,8 @@ class RAGEngine:
 
         return "\n".join(valid[:2]) if valid else None
 
-    def _search_chromadb(self, question):
-        """ChromaDB 降级检索（仅在首次调用时 import chromadb）"""
+    def _search_chromadb(self, emb):
+        """ChromaDB 降级检索 — 用统一 embedding 避免向量空间不一致"""
         try:
             import chromadb
         except ImportError:
@@ -257,8 +261,10 @@ class RAGEngine:
                 return None
             client = chromadb.PersistentClient(path=self.chroma_path)
             collection = client.get_collection(self.chroma_collection)
+            # 用 query_embeddings 而不是 query_texts
+            # 保证和建库时同一个 MiniLM-L12 向量空间
             results = collection.query(
-                query_texts=[question],
+                query_embeddings=[emb],
                 n_results=5,
                 where={"chunk_type": {"$in": ["text"]}},
             )
