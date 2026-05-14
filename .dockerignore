@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 备份
+*.backup/
+chroma_db.backup/
+
+# Git
+.git/
+
+# 环境变量（不要打包进镜像）
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# 测试
+test_*.py
+check_*.py
+
+# 重建脚本（不需要运行时的知识库重建）
+rebuild_kb*.py
+
+# macOS
+.DS_Store

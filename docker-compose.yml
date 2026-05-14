@@ -1,0 +1,76 @@
+# ============================================================
+# IFA 上牌小助手 — Docker Compose 编排
+# ============================================================
+# 启动:  docker compose up -d
+# 停止:  docker compose down
+# 日志:  docker compose logs -f lili-bot
+#
+# 包含两个服务：
+#   1. lili-bot     — Flask 回调服务器（核心）
+#   2. ngrok        — 内网穿透（可选，有公网 IP 可去掉）
+#
+# ngrok 需要注册 https://ngrok.com 获取 authtoken
+# 免费版 ngrok 每次重启地址会变，需更新 WorkTool 回调地址
+# ============================================================
+
+services:
+  # ── 核心服务：Lili Bot Flask 服务器 ──
+  lili-bot:
+    build: .
+    image: ifa-lili-bot:latest
+    container_name: lili-bot
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5000
+      - CHROMA_DB_PATH=/app/chroma_db
+      - CHROMA_COLLECTION=ifa_licensing_kb
+      # 以下从 .env 文件读取
+      - WORKTOOL_ROBOT_ID=${WORKTOOL_ROBOT_ID}
+      - WORKTOOL_API_URL=${WORKTOOL_API_URL:-https://api.worktool.ymdyes.cn/wework/sendRawMessage}
+      - SUBMIT_EMAIL=${SUBMIT_EMAIL:-license@example.com}
+      - A1_FORM_URL=${A1_FORM_URL}
+      - A1_GUIDE_URL=${A1_GUIDE_URL}
+      - WECOM_BOT_ID=${WECOM_BOT_ID:-}
+      - WECOM_BOT_SECRET=${WECOM_BOT_SECRET:-}
+    volumes:
+      # 持久化 pending 状态（避免容器重启丢失）
+      - lili-data:/tmp
+    networks:
+      - lili-net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── ngrok 内网穿透（可选） ──
+  # 如果服务器有公网 IP 或使用其他穿透方案，可以注释掉整个 ngrok 服务
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: lili-ngrok
+    restart: unless-stopped
+    depends_on:
+      lili-bot:
+        condition: service_healthy
+    command:
+      - "http"
+      - "lili-bot:5000"
+      - "--log=stdout"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTH_TOKEN}
+    networks:
+      - lili-net
+    # 暴露 ngrok 的 API 端口以便查询公网地址
+    ports:
+      - "4040:4040"
+
+volumes:
+  lili-data:
+    name: lili-bot-data
+
+networks:
+  lili-net:
+    name: lili-network

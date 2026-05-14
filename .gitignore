@@ -1,0 +1,44 @@
+# ============================================================
+# IFA 上牌小助手 — .gitignore
+# ============================================================
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 环境变量（含密钥，绝对不能提交）
+.env
+.env.local
+.env.production
+
+# ChromaDB 备份
+chroma_db.backup/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试文件（开发调试用）
+check_*.py
+test_tr_*.py
+test_rewrite_*.py
+test_retrieval.py
+add_iqe_chunks.py
+iqe_supplement_chunks.json
+
+# Docker 相关
+docker-compose.override.yml
+
+# 临时文件
+/tmp/
+*.log
