@@ -100,167 +100,186 @@ def clear_pending():
 
 
 # ============================================================
-# RAG 知识库检索（Milvus 优先，ChromaDB 降级）
+# RAG 检索引擎（Milvus 优先，ChromaDB 懒加载降级）
 # ============================================================
 
-# 内部文档关键词过滤（不对外暴露的模板和流程描述）
-_INTERNAL_KEYWORDS = [
-    "Agent", "功能", "## ", "【例：", "触发条件",
-    "核心流程", "【主动推送】", "【被动问答】", "```plain",
-    "上牌小助手", "上牌申请", "欢迎语", "资料-", "IA系统",
-    "开设邮箱", "合规培训", "TR协议", "缴费", "等待保监",
-    "牌照吊销",
-]
+class RAGEngine:
+    """向量检索引擎 — 启动时预加载模型和 Milvus，ChromaDB 仅降级时导入"""
 
-# Milvus 客户端（懒加载 + 缓存）
-_milvus_client = None
-_milvus_available = None  # None=未检测, True/False
-
-
-def _get_milvus_client():
-    """获取 Milvus 客户端（懒加载）"""
-    global _milvus_client, _milvus_available
-    if _milvus_available is False:
-        return None
-    if _milvus_client is not None:
-        return _milvus_client
-    try:
-        from pymilvus import MilvusClient
-        if not os.path.exists(MILVUS_DB_PATH):
-            logger.info(f"[RAG] Milvus 数据库不存在: {MILVUS_DB_PATH}")
-            _milvus_available = False
-            return None
-        _milvus_client = MilvusClient(MILVUS_DB_PATH)
-        if not _milvus_client.has_collection(MILVUS_COLLECTION):
-            logger.info(f"[RAG] Milvus collection '{MILVUS_COLLECTION}' 不存在")
-            _milvus_client.close()
-            _milvus_client = None
-            _milvus_available = False
-            return None
-        _milvus_available = True
-        logger.info(f"[RAG] 使用 Milvus ({MILVUS_DB_PATH})")
-        return _milvus_client
-    except Exception as e:
-        logger.warning(f"[RAG] Milvus 不可用: {e}")
-        _milvus_available = False
-        return None
-
-
-def _rag_milvus(question_emb):
-    """Milvus 向量检索"""
-    client = _get_milvus_client()
-    if client is None:
-        return None
-
-    results = client.search(
-        collection_name=MILVUS_COLLECTION,
-        data=[question_emb],
-        limit=5,
-        output_fields=["text", "chunk_type", "module"],
-        filter='chunk_type in ["knowledge", "text"]',
-    )
-
-    if not results or not results[0]:
-        return None
-
-    # 过滤内部文档
-    def is_internal(text: str) -> bool:
-        return any(kw.lower() in text.lower() for kw in _INTERNAL_KEYWORDS)
-
-    valid_docs = [
-        hit["entity"]["text"]
-        for hit in results[0]
-        if hit["entity"].get("text", "").strip()
-        and not is_internal(hit["entity"]["text"])
+    # 内部文档关键词（不对外暴露的模板和流程描述）
+    _INTERNAL = [
+        "Agent", "功能", "## ", "【例：", "触发条件",
+        "核心流程", "【主动推送】", "【被动问答】", "```plain",
+        "上牌小助手", "上牌申请", "欢迎语", "资料-", "IA系统",
+        "开设邮箱", "合规培训", "TR协议", "缴费", "等待保监",
+        "牌照吊销",
     ]
 
-    if not valid_docs:
-        return None
+    def __init__(self, milvus_path, milvus_collection,
+                 chroma_path, chroma_collection):
+        self.milvus_path = milvus_path
+        self.milvus_collection = milvus_collection
+        self.chroma_path = chroma_path
+        self.chroma_collection = chroma_collection
+        self._milvus = None        # MilvusClient | None
+        self._model = None         # SentenceTransformer | None
+        self._using = None         # "milvus" | "chromadb" | None
 
-    return "\n".join(valid_docs[:2])
+    # ── 属性 ──
 
+    @property
+    def status(self) -> str:
+        """当前使用的向量数据库"""
+        return self._using or "none"
 
-def _rag_chromadb(question: str):
-    """ChromaDB 向量检索（降级方案）"""
-    try:
-        import chromadb
+    @property
+    def db_exists(self) -> bool:
+        return os.path.exists(self.milvus_path) or os.path.exists(self.chroma_path)
 
-        if not os.path.exists(CHROMA_PATH):
-            return None
+    # ── 启动预热 ──
 
-        client = chromadb.PersistentClient(path=CHROMA_PATH)
-        try:
-            collection = client.get_collection(CHROMA_COLLECTION)
-        except Exception:
-            return None
+    def warmup(self):
+        """启动时预加载 embedding 模型和 Milvus 连接（阻塞，~10-30 秒）"""
+        logger.info("[RAG] 预热中...")
+        self._load_model()
+        self._load_milvus()
+        if self._using == "milvus":
+            logger.info(f"[RAG] 就绪 — Milvus ({self.milvus_path})")
+        elif self._using == "chromadb":
+            logger.info(f"[RAG] 就绪 — ChromaDB 降级 ({self.chroma_path})")
+        else:
+            logger.warning("[RAG] 未找到任何向量数据库")
 
-        results = collection.query(
-            query_texts=[question],
-            n_results=5,
-            where={"chunk_type": {"$in": ["knowledge", "text"]}},
-        )
-
-        if not (results and results.get("documents") and results["documents"][0]):
-            return None
-
-        def is_internal(doc: str) -> bool:
-            return any(kw.lower() in doc.lower() for kw in _INTERNAL_KEYWORDS)
-
-        valid_docs = [
-            d for d in results["documents"][0]
-            if d.strip() and not is_internal(d)
-        ]
-        if not valid_docs:
-            return None
-
-        return "\n".join(valid_docs[:2])
-
-    except Exception as e:
-        logger.error(f"[RAG] ChromaDB 降级检索失败: {e}")
-        return None
-
-
-# Embedding 模型缓存（懒加载，避免每次查询重复加载）
-_embedding_model = None
-
-
-def _get_embedding_model():
-    """获取 embedding 模型（懒加载 + 全局缓存）"""
-    global _embedding_model
-    if _embedding_model is None:
-        import os as _os
-        _os.environ.setdefault("HF_HUB_OFFLINE", "1")  # 优先用本地缓存
+    def _load_model(self):
+        """加载 embedding 模型（470MB，仅一次）"""
+        if self._model is not None:
+            return
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
         from sentence_transformers import SentenceTransformer
-        logger.info("[RAG] 加载 embedding 模型...")
-        _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        logger.info("[RAG] 加载 embedding 模型 paraphrase-multilingual-MiniLM-L12-v2 ...")
+        self._model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
         logger.info("[RAG] embedding 模型已就绪")
-    return _embedding_model
 
+    def _load_milvus(self):
+        """连接 Milvus"""
+        if self._milvus is not None:
+            return
+        if not os.path.exists(self.milvus_path):
+            logger.info(f"[RAG] Milvus 不存在，尝试 ChromaDB...")
+            self._try_chromadb_on_startup()
+            return
+        try:
+            from pymilvus import MilvusClient
+            self._milvus = MilvusClient(self.milvus_path)
+            if not self._milvus.has_collection(self.milvus_collection):
+                logger.info(f"[RAG] Milvus collection 不存在")
+                self._milvus.close()
+                self._milvus = None
+                self._try_chromadb_on_startup()
+                return
+            self._using = "milvus"
+        except Exception as e:
+            logger.warning(f"[RAG] Milvus 不可用: {e}")
+            self._milvus = None
+            self._try_chromadb_on_startup()
 
-def rag_reply(question: str) -> str | None:
-    """从知识库检索相关回答（Milvus 优先 → ChromaDB 降级）"""
-    try:
-        # 1. 生成查询向量（模型首次加载较慢，后续走缓存）
-        model = _get_embedding_model()
-        q_emb = model.encode([question], normalize_embeddings=True)[0].tolist()
+    def _try_chromadb_on_startup(self):
+        """启动时尝试 ChromaDB（仅在 Milvus 不可用时）"""
+        try:
+            import chromadb
+            if not os.path.exists(self.chroma_path):
+                return
+            c = chromadb.PersistentClient(path=self.chroma_path)
+            c.get_collection(self.chroma_collection)
+            self._using = "chromadb"
+        except Exception:
+            pass
 
-        # 2. 尝试 Milvus
-        result = _rag_milvus(q_emb)
-        if result:
-            logger.info(f"[RAG] Milvus 命中: {result[:80]}...")
-            return f"根据知识库信息：{result[:500]}"
+    # ── 检索入口 ──
 
-        # 3. 降级到 ChromaDB
-        result = _rag_chromadb(question)
+    def search(self, question: str) -> str | None:
+        """检索知识库，返回匹配文本或 None"""
+        if self._model is None:
+            self._load_model()
+        emb = self._model.encode([question], normalize_embeddings=True)[0].tolist()
+
+        # Milvus 优先
+        if self._milvus is not None:
+            result = self._search_milvus(emb)
+            if result:
+                logger.info(f"[RAG] Milvus 命中: {result[:80]}...")
+                return f"根据知识库信息：{result[:500]}"
+
+        # ChromaDB 降级
+        result = self._search_chromadb(question)
         if result:
             logger.info(f"[RAG] ChromaDB 降级命中: {result[:80]}...")
             return f"根据知识库信息：{result[:500]}"
 
         return None
 
-    except Exception as e:
-        logger.error(f"[RAG] 检索失败: {e}")
-        return None
+    def _search_milvus(self, emb):
+        """Milvus 向量检索 + 内部关键词过滤"""
+        try:
+            results = self._milvus.search(
+                collection_name=self.milvus_collection,
+                data=[emb],
+                limit=5,
+                output_fields=["text", "chunk_type", "module"],
+            )
+        except Exception as e:
+            logger.error(f"[RAG] Milvus 检索异常: {e}")
+            return None
+
+        if not results or not results[0]:
+            return None
+
+        valid = []
+        for hit in results[0]:
+            text = (hit.get("entity", {}).get("text", "")).strip()
+            if not text or self._is_internal(text):
+                continue
+            ct = hit.get("entity", {}).get("chunk_type", "")
+            if ct == "template":   # 话术模板不对外暴露
+                continue
+            valid.append(text)
+
+        return "\n".join(valid[:2]) if valid else None
+
+    def _search_chromadb(self, question):
+        """ChromaDB 降级检索（仅在首次调用时 import chromadb）"""
+        try:
+            import chromadb
+        except ImportError:
+            return None
+        try:
+            if not os.path.exists(self.chroma_path):
+                return None
+            client = chromadb.PersistentClient(path=self.chroma_path)
+            collection = client.get_collection(self.chroma_collection)
+            results = collection.query(
+                query_texts=[question],
+                n_results=5,
+                where={"chunk_type": {"$in": ["text"]}},
+            )
+            if not (results and results.get("documents") and results["documents"][0]):
+                return None
+            valid = [
+                d for d in results["documents"][0]
+                if d.strip() and not self._is_internal(d)
+            ]
+            return "\n".join(valid[:2]) if valid else None
+        except Exception as e:
+            logger.error(f"[RAG] ChromaDB 降级检索失败: {e}")
+            return None
+
+    @classmethod
+    def _is_internal(cls, text: str) -> bool:
+        return any(kw.lower() in text.lower() for kw in cls._INTERNAL)
+
+
+# ── 全局引擎实例（在 __main__ 中 warmup）──
+rag_engine: RAGEngine | None = None
 
 
 # ============================================================
@@ -394,7 +413,10 @@ def generate_reply(question_orig: str):
         )
 
     # ── RAG 检索 ──
-    rag_result = rag_reply(question_orig)
+    if rag_engine is not None:
+        rag_result = rag_engine.search(question_orig)
+    else:
+        rag_result = None
     if rag_result:
         return rag_result
 
@@ -615,17 +637,15 @@ def callback():
 @app.route("/health")
 def health():
     """健康检查端点"""
-    milvus_ok = os.path.exists(MILVUS_DB_PATH)
-    chroma_ok = os.path.exists(CHROMA_PATH)
-    robot_configured = bool(ROBOT_ID)
+    engine_status = rag_engine.status if rag_engine else "not_initialized"
     return jsonify({
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
-        "vector_db": "milvus" if milvus_ok else ("chromadb" if chroma_ok else "none"),
-        "milvus_db": milvus_ok,
-        "chroma_db": chroma_ok,
-        "robot_configured": robot_configured,
-        "version": "1.1.0",
+        "vector_db": engine_status,
+        "milvus_db": engine_status == "milvus",
+        "chroma_db": engine_status == "chromadb",
+        "robot_configured": bool(ROBOT_ID),
+        "version": "1.2.0",
     })
 
 
@@ -633,7 +653,7 @@ def health():
 def index():
     return jsonify({
         "name": "IFA 上牌小助手 (Lili Bot)",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "vector_db": "Milvus Lite + ChromaDB fallback",
         "endpoints": {
             "callback": "/worktool-callback",
@@ -648,19 +668,21 @@ def index():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  IFA 上牌小助手 (Lili Bot) v1.1.0")
+    print("  IFA 上牌小助手 (Lili Bot) v1.2.0")
     print("=" * 55)
     print(f"  监听地址 : http://{FLASK_HOST}:{FLASK_PORT}")
     print(f"  回调端点 : /worktool-callback")
     print(f"  健康检查 : /health")
     print(f"  Robot ID : {'已配置' if ROBOT_ID else '❌ 未配置!'}")
-    # 检测向量数据库
-    if os.path.exists(MILVUS_DB_PATH):
-        print(f"  向量数据库: Milvus Lite ({MILVUS_DB_PATH})")
-    elif os.path.exists(CHROMA_PATH):
-        print(f"  向量数据库: ChromaDB ({CHROMA_PATH})")
-    else:
-        print(f"  向量数据库: ❌ 未找到!")
+
+    # 初始化 RAG 引擎（预加载模型 + Milvus 连接）
+    print("  向量数据库: 初始化中...")
+    rag_engine = RAGEngine(
+        MILVUS_DB_PATH, MILVUS_COLLECTION,
+        CHROMA_PATH, CHROMA_COLLECTION,
+    )
+    rag_engine.warmup()
+    print(f"  向量数据库: {rag_engine.status.upper()} ({'Milvus' if rag_engine.status == 'milvus' else 'ChromaDB' if rag_engine.status == 'chromadb' else '未找到'})")
     print("=" * 55)
 
     if not ROBOT_ID:
