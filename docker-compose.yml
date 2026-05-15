@@ -43,11 +43,6 @@ services:
       - lili-data:/tmp
     networks:
       - lili-net
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
   # ── ngrok 内网穿透（可选） ──
   # 如果服务器有公网 IP 或使用其他穿透方案，可以注释掉整个 ngrok 服务
