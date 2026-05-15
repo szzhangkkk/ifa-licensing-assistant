@@ -192,7 +192,23 @@ check_model_cache() {
     # 检查 sentence_transformers 是否已安装（宿主机需要）
     if ! python3 -c "import sentence_transformers" 2>/dev/null; then
         echo -e "${YELLOW}[!] 宿主机未安装 sentence_transformers，正在安装...${NC}"
-        pip3 install --quiet sentence-transformers 2>&1 | tail -1
+        # 多重 fallback：python3 -m pip → pip3 → pip → apt
+        if python3 -m pip install --quiet sentence-transformers 2>/dev/null; then
+            :
+        elif command -v pip3 &>/dev/null && pip3 install --quiet sentence-transformers 2>/dev/null; then
+            :
+        elif command -v pip &>/dev/null && pip install --quiet sentence-transformers 2>/dev/null; then
+            :
+        else
+            echo ""
+            echo -e "${RED}[错误] 无法安装 sentence_transformers（pip 不可用）${NC}"
+            echo ""
+            echo "  请手动安装 pip 后再试:"
+            echo "    sudo apt install python3-pip        # Debian/Ubuntu"
+            echo "    sudo yum install python3-pip        # CentOS/RHEL"
+            echo ""
+            exit 1
+        fi
     fi
 
     # 下载模型到宿主机 HF 缓存（HF_ENDPOINT 用镜像站）
