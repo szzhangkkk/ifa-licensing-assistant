@@ -11,6 +11,19 @@
 #
 # ngrok 需要注册 https://ngrok.com 获取 authtoken
 # 免费版 ngrok 每次重启地址会变，需更新 WorkTool 回调地址
+#
+# ── Docker Hub 镜像加速（国内必看）──
+# 如果 docker pull 很慢，配置 Docker daemon 镜像加速：
+#   sudo mkdir -p /etc/docker
+#   sudo tee /etc/docker/daemon.json <<'EOF'
+#   {
+#     "registry-mirrors": [
+#       "https://docker.1ms.run",
+#       "https://docker.xuanyuan.me"
+#     ]
+#   }
+#   EOF
+#   sudo systemctl restart docker
 # ============================================================
 
 services:

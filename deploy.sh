@@ -66,6 +66,33 @@ check_docker() {
         exit 1
     fi
 
+    # 检查 Docker 镜像加速（国内服务器建议配置）
+    if ! docker info 2>/dev/null | grep -q 'Registry Mirrors'; then
+        echo -e "${YELLOW}[!] 未检测到 Docker 镜像加速，docker pull 可能很慢${NC}"
+        echo ""
+        echo "  建议配置 Docker 镜像加速（任选其一）:"
+        echo ""
+        echo "  方案 A — 阿里云镜像加速（需注册获取专属地址）:"
+        echo "    https://cr.console.aliyun.com → 镜像工具 → 镜像加速器"
+        echo ""
+        echo "  方案 B — 通用镜像:"
+        echo "    sudo mkdir -p /etc/docker"
+        echo "    sudo tee /etc/docker/daemon.json <<'EOF'"
+        echo '    {'
+        echo '      "registry-mirrors": ['
+        echo '        "https://docker.1ms.run",'
+        echo '        "https://docker.xuanyuan.me"'
+        echo '      ]'
+        echo '    }'
+        echo '    EOF'
+        echo "    sudo systemctl restart docker"
+        echo ""
+        read -p "  跳过继续? [Y/n] " -r
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            exit 0
+        fi
+    fi
+
     echo -e "${GREEN}[✓] Docker 环境已就绪${NC}"
 }
 
