@@ -231,6 +231,7 @@ class RAGEngine:
                 data=[emb],
                 limit=10,  # 多取一些，防止 template 过滤后不够
                 output_fields=["text", "chunk_type", "module"],
+                filter='chunk_type == "text"',
             )
         except Exception as e:
             logger.error(f"[RAG] Milvus 检索异常: {e}")
