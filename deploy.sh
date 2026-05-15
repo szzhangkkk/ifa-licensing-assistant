@@ -55,6 +55,17 @@ check_docker() {
         exit 1
     fi
 
+    # 检查 daemon 是否可达（compose version 不需要 daemon，但 build 需要）
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}[错误] Docker daemon 未运行或当前用户无权限${NC}"
+        echo ""
+        echo "  请检查:"
+        echo "  1. Docker daemon 是否在运行: sudo systemctl start docker"
+        echo "  2. 当前用户是否在 docker 组: groups"
+        echo "  3. 如果不在，执行: sudo usermod -aG docker \$USER && newgrp docker"
+        exit 1
+    fi
+
     echo -e "${GREEN}[✓] Docker 环境已就绪${NC}"
 }
 
