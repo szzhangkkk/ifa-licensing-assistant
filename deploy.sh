@@ -157,6 +157,33 @@ check_vectordb() {
     fi
 }
 
+check_model_cache() {
+    # 检查 HF 模型缓存是否已复制到项目目录（Docker build 需要 COPY hf_model_cache/）
+    local HF_CACHE_SRC="$HOME/.cache/huggingface/hub/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+    local HF_CACHE_DST="./hf_model_cache/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+
+    if [ -d "$HF_CACHE_DST" ] && [ -f "$HF_CACHE_DST/snapshots"/*/model.safetensors ] 2>/dev/null; then
+        echo -e "${GREEN}[✓] HF 模型缓存已就绪 (${HF_CACHE_DST})${NC}"
+        return 0
+    fi
+
+    if [ ! -d "$HF_CACHE_SRC" ]; then
+        echo ""
+        echo -e "${RED}[错误] 未找到 HF 模型缓存，Docker 构建会失败${NC}"
+        echo ""
+        echo "  请先在宿主机下载模型:"
+        echo "    python3 -c \"from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')\""
+        echo ""
+        exit 1
+    fi
+
+    echo ""
+    echo -e "${YELLOW}[!] hf_model_cache/ 不存在，正在从宿主机 HF 缓存复制...${NC}"
+    mkdir -p "$(dirname "$HF_CACHE_DST")"
+    cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
+    echo -e "${GREEN}[✓] 模型缓存已复制到项目目录 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
+}
+
 check_ngrok_token() {
     if [ -z "$NGROK_AUTH_TOKEN" ] || [ "$NGROK_AUTH_TOKEN" = "your_ngrok_token_here" ]; then
         return 1
@@ -175,6 +202,7 @@ cmd_deploy() {
     check_docker
     check_env
     check_vectordb
+    check_model_cache
 
     echo ""
     echo "  部署配置:"
@@ -282,6 +310,7 @@ cmd_status() {
 
 cmd_update() {
     echo "更新 Lili Bot..."
+    check_model_cache
     docker compose down
     docker compose build --no-cache lili-bot
     docker compose up -d lili-bot

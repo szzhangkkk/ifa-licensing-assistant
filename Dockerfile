@@ -35,11 +35,10 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── 预下载 embedding 模型到镜像（避免启动时下载 470MB 导致超时）──
-# 使用 HF 镜像站（国内下载更快）
-ENV HF_ENDPOINT=https://hf-mirror.com
-
-RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+# ── Embedding 模型（宿主机预下载 → COPY 进镜像，彻底离线）──
+# 模型在宿主机 ~/.cache/huggingface/ 已下载，deploy.sh 构建前自动复制到 hf_model_cache/
+ENV HF_HUB_OFFLINE=1
+COPY hf_model_cache/ /root/.cache/huggingface/hub/
 
 # ── 应用代码 ──
 COPY app.py .
@@ -60,7 +59,6 @@ ENV MILVUS_DB_PATH=/app/milvus.db
 ENV MILVUS_COLLECTION=ifa_licensing_kb
 ENV CHROMA_DB_PATH=/app/chroma_db
 ENV CHROMA_COLLECTION=ifa_licensing_kb
-ENV HF_HUB_OFFLINE=1
 
 # ── 健康检查 ──
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

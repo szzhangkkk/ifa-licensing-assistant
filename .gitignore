@@ -39,6 +39,9 @@ iqe_supplement_chunks.json
 # Docker 相关
 docker-compose.override.yml
 
+# HF 模型缓存（458MB，deploy.sh 自动从宿主机 ~/.cache/huggingface 复制）
+hf_model_cache/
+
 # 临时文件
 /tmp/
 *.log
