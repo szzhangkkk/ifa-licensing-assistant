@@ -102,18 +102,20 @@ check_env() {
 }
 
 check_vectordb() {
-    if [ -f "milvus.db" ]; then
-        echo -e "${GREEN}[✓] 知识库已就绪 (Milvus Lite: milvus.db)${NC}"
-    elif [ -d "chroma_db" ] && [ -f "chroma_db/chroma.sqlite3" ]; then
-        echo -e "${YELLOW}[!] 使用 ChromaDB 降级方案 (chroma_db/)，建议迁移到 Milvus: python3 rebuild_kb_v2.py${NC}"
-    else
+    # Docker build 依赖 milvus.db，必须存在
+    if [ ! -f "milvus.db" ]; then
         echo ""
-        echo -e "${RED}[错误] 向量数据库未找到!${NC}"
+        echo -e "${RED}[错误] milvus.db 未找到，Docker 构建会失败（Dockerfile 有 COPY milvus.db）${NC}"
         echo ""
         echo "  请先构建知识库:"
         echo "    python3 rebuild_kb_v2.py"
         echo ""
         exit 1
+    fi
+    echo -e "${GREEN}[✓] 知识库已就绪 (Milvus Lite: $(du -h milvus.db | cut -f1))${NC}"
+
+    if [ -d "chroma_db" ] && [ -f "chroma_db/chroma.sqlite3" ]; then
+        echo -e "${GREEN}[✓] ChromaDB 降级备选已就绪${NC}"
     fi
 }
 
