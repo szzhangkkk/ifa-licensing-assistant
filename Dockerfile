@@ -26,8 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # ── Python 依赖（先 pip install，利用 Docker 层缓存）──
-# 使用阿里云 PyPI 镜像（国内下载更快）
-ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+# 使用清华 PyPI 镜像（国内下载更快）
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
+
+# 先装 CPU 版 torch（避免拉取 ~2GB CUDA 全家桶，纯 CPU 部署不需要）
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
