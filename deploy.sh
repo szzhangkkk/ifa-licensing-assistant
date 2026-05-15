@@ -38,7 +38,7 @@ print_banner() {
     echo ""
     echo -e "${BLUE}╔═══════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║     IFA 上牌小助手 (Lili Bot) — 一键部署        ║${NC}"
-    echo -e "${BLUE}║                v1.0.0                            ║${NC}"
+    echo -e "${BLUE}║                v1.2.0                            ║${NC}"
     echo -e "${BLUE}╚═══════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -139,7 +139,7 @@ cmd_deploy() {
     echo ""
     echo "  部署配置:"
     echo "    Robot ID    : ${WORKTOOL_ROBOT_ID:0:12}..."
-    echo "    知识库路径   : $SCRIPT_DIR/chroma_db"
+    echo "    向量数据库   : Milvus Lite (milvus.db) + ChromaDB 降级备选"
     echo "    Flask 端口  : ${FLASK_PORT:-5000}"
     if [ "$use_ngrok" = "yes" ]; then
         echo "    ngrok       : 启用"
@@ -159,13 +159,8 @@ cmd_deploy() {
     echo ""
     echo "  [1/3] 构建 Docker 镜像..."
 
-    # 根据是否使用 ngrok 选择 compose 文件
-    if [ "$use_ngrok" = "yes" ] && check_ngrok_token; then
-        docker compose build lili-bot
-    else
-        # 不使用 ngrok 时只启动 lili-bot
-        docker compose build lili-bot
-    fi
+    # 构建 Docker 镜像（ngrok 和 lili-bot 共用一个 compose 文件）
+    docker compose build
 
     echo ""
     echo "  [2/3] 启动服务..."

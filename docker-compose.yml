@@ -29,6 +29,7 @@ services:
       - MILVUS_COLLECTION=ifa_licensing_kb
       - CHROMA_DB_PATH=/app/chroma_db
       - CHROMA_COLLECTION=ifa_licensing_kb
+      - HF_HUB_OFFLINE=1
       # 以下从 .env 文件读取
       - WORKTOOL_ROBOT_ID=${WORKTOOL_ROBOT_ID}
       - WORKTOOL_API_URL=${WORKTOOL_API_URL:-https://api.worktool.ymdyes.cn/wework/sendRawMessage}

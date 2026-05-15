@@ -3,15 +3,15 @@
 # 构建:  docker build -t ifa-lili-bot .
 # 运行:  docker run -p 5000:5000 --env-file .env ifa-lili-bot
 #
-# 知识库: milvus.db (预构建的 Milvus Lite 向量数据库)
-# 仅 25 chunks 时 milvus.db ~5MB（比 ChromaDB 的 ~50MB 更小）
+# 知识库: milvus.db（预构建的 Milvus Lite 向量数据库）
+# 嵌入模型: paraphrase-multilingual-MiniLM-L12-v2（预下载到镜像）
 # ============================================================
 
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="IFA 上牌小助手 (Lili Bot)"
 LABEL org.opencontainers.image.description="企业微信 WorkTool 群消息 AI 助手，Milvus 向量检索 + Docker 一键部署"
-LABEL org.opencontainers.image.version="1.1.0"
+LABEL org.opencontainers.image.version="1.2.0"
 
 # ── 系统依赖 ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,20 +21,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── 工作目录 ──
 WORKDIR /app
 
-# ── Python 依赖 ──
+# ── Python 依赖（先 pip install，利用 Docker 层缓存）──
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ── 预下载 embedding 模型到镜像（避免启动时下载 470MB 导致超时）──
+RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+
 # ── 应用代码 ──
 COPY app.py .
-COPY ifa_*.py ./
-COPY wecom_sdk_long_connection.py ./
 
-# ── 知识库（Milvus Lite） ──
-# milvus.db 需预先构建（运行 rebuild_kb_v2.py）
+# ── 知识库（Milvus Lite — 必须先运行 rebuild_kb_v2.py 生成）──
 COPY milvus.db ./
 
-# ── ChromaDB 降级备选 ──
+# ── ChromaDB 降级备选（可选，Milvus 不可用时自动切换）──
 COPY chroma_db/ ./chroma_db/
 
 # ── 端口 ──
@@ -47,6 +47,7 @@ ENV MILVUS_DB_PATH=/app/milvus.db
 ENV MILVUS_COLLECTION=ifa_licensing_kb
 ENV CHROMA_DB_PATH=/app/chroma_db
 ENV CHROMA_COLLECTION=ifa_licensing_kb
+ENV HF_HUB_OFFLINE=1
 
 # ── 健康检查 ──
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
