@@ -158,30 +158,72 @@ check_vectordb() {
 }
 
 check_model_cache() {
-    # 检查 HF 模型缓存是否已复制到项目目录（Docker build 需要 COPY hf_model_cache/）
-    local HF_CACHE_SRC="$HOME/.cache/huggingface/hub/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
-    local HF_CACHE_DST="./hf_model_cache/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+    # 确保 HF 模型缓存存在于项目目录（Docker build 需要 COPY hf_model_cache/）
+    # 策略：hf_model_cache/ 已有 → 跳过
+    #       宿主机 HF 缓存有 → 复制（秒级）
+    #       都没有 → 宿主机自动下载（首次约 2-5 分钟，仅一次）
+    local MODEL_NAME="paraphrase-multilingual-MiniLM-L12-v2"
+    local HF_CACHE_SRC="$HOME/.cache/huggingface/hub/models--sentence-transformers--${MODEL_NAME}"
+    local HF_CACHE_DST="./hf_model_cache/models--sentence-transformers--${MODEL_NAME}"
 
+    # 1) 项目目录已有 → 直接返回
     if [ -d "$HF_CACHE_DST" ] && [ -f "$HF_CACHE_DST/snapshots"/*/model.safetensors ] 2>/dev/null; then
         echo -e "${GREEN}[✓] HF 模型缓存已就绪 (${HF_CACHE_DST})${NC}"
         return 0
     fi
 
-    if [ ! -d "$HF_CACHE_SRC" ]; then
+    # 2) 宿主机 HF 缓存有 → 快速复制
+    if [ -d "$HF_CACHE_SRC" ] && [ -f "$HF_CACHE_SRC/snapshots"/*/model.safetensors ] 2>/dev/null; then
         echo ""
-        echo -e "${RED}[错误] 未找到 HF 模型缓存，Docker 构建会失败${NC}"
+        echo -e "${YELLOW}[!] 正在从宿主机 HF 缓存复制模型 (约 458MB)...${NC}"
+        mkdir -p "$(dirname "$HF_CACHE_DST")"
+        cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
+        echo -e "${GREEN}[✓] 模型缓存已复制 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
+        return 0
+    fi
+
+    # 3) 都没有 → 宿主机下载（用 hf-mirror.com 镜像，国内更快）
+    echo ""
+    echo -e "${YELLOW}[!] 首次部署：正在下载 embedding 模型 (约 470MB, 可能需要 2-5 分钟)...${NC}"
+    echo "  模型: sentence-transformers/${MODEL_NAME}"
+    echo "  镜像: https://hf-mirror.com (HuggingFace 国内镜像)"
+    echo ""
+
+    # 检查 sentence_transformers 是否已安装（宿主机需要）
+    if ! python3 -c "import sentence_transformers" 2>/dev/null; then
+        echo -e "${YELLOW}[!] 宿主机未安装 sentence_transformers，正在安装...${NC}"
+        pip3 install --quiet sentence-transformers 2>&1 | tail -1
+    fi
+
+    # 下载模型到宿主机 HF 缓存（HF_ENDPOINT 用镜像站）
+    if HF_ENDPOINT=https://hf-mirror.com python3 -c "
+from sentence_transformers import SentenceTransformer
+print('  下载中...')
+SentenceTransformer('${MODEL_NAME}')
+print('  下载完成')
+" 2>&1; then
         echo ""
-        echo "  请先在宿主机下载模型:"
-        echo "    python3 -c \"from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')\""
+        echo -e "${GREEN}[✓] 模型下载完成${NC}"
+
+        # 复制到项目目录
+        echo -e "${YELLOW}[!] 正在复制到项目目录...${NC}"
+        mkdir -p "$(dirname "$HF_CACHE_DST")"
+        cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
+        echo -e "${GREEN}[✓] 模型缓存已就绪 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
+    else
+        echo ""
+        echo -e "${RED}[错误] 模型下载失败${NC}"
+        echo ""
+        echo "  可能的原因:"
+        echo "  1. 网络无法访问 hf-mirror.com"
+        echo "  2. 磁盘空间不足（需要约 1GB）"
+        echo ""
+        echo "  手动下载方法:"
+        echo "    HF_ENDPOINT=https://hf-mirror.com python3 -c \\"
+        echo "      \"from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_NAME}')\""
         echo ""
         exit 1
     fi
-
-    echo ""
-    echo -e "${YELLOW}[!] hf_model_cache/ 不存在，正在从宿主机 HF 缓存复制...${NC}"
-    mkdir -p "$(dirname "$HF_CACHE_DST")"
-    cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
-    echo -e "${GREEN}[✓] 模型缓存已复制到项目目录 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
 }
 
 check_ngrok_token() {
