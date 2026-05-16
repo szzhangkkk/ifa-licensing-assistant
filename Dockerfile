@@ -30,7 +30,9 @@ WORKDIR /app
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 先装 CPU 版 torch（避免拉取 ~2GB CUDA 全家桶，纯 CPU 部署不需要）
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# --extra-index-url 不覆盖 PIP_INDEX_URL（清华源），国内下载更快
+# 仅在清华源缺少 CPU wheel 时才回退到 pytorch.org
+RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

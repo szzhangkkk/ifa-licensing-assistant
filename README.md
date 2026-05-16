@@ -1,7 +1,7 @@
 # IFA 上牌小助手 (Lili Bot)
 
 > 企业微信 WorkTool 群消息 AI 助手 — 支持上牌流程引导、知识库问答、Docker 一键部署  
-> **v1.1.0 — Milvus Lite 向量检索引擎，ChromaDB 自动降级**
+> **v1.2.0 — Milvus Lite 向量检索引擎，ChromaDB 自动降级**
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)

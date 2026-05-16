@@ -167,17 +167,18 @@ check_model_cache() {
     local HF_CACHE_DST="./hf_model_cache/models--sentence-transformers--${MODEL_NAME}"
 
     # 1) 项目目录已有 → 直接返回
-    if [ -d "$HF_CACHE_DST" ] && [ -f "$HF_CACHE_DST/snapshots"/*/model.safetensors ] 2>/dev/null; then
+    if [ -d "$HF_CACHE_DST" ] && compgen -G "$HF_CACHE_DST/snapshots/*/model.safetensors" > /dev/null 2>&1; then
         echo -e "${GREEN}[✓] HF 模型缓存已就绪 (${HF_CACHE_DST})${NC}"
         return 0
     fi
 
     # 2) 宿主机 HF 缓存有 → 快速复制
-    if [ -d "$HF_CACHE_SRC" ] && [ -f "$HF_CACHE_SRC/snapshots"/*/model.safetensors ] 2>/dev/null; then
+    if [ -d "$HF_CACHE_SRC" ] && compgen -G "$HF_CACHE_SRC/snapshots/*/model.safetensors" > /dev/null 2>&1; then
         echo ""
         echo -e "${YELLOW}[!] 正在从宿主机 HF 缓存复制模型 (约 458MB)...${NC}"
         mkdir -p "$(dirname "$HF_CACHE_DST")"
         cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
+        rm -rf "$HF_CACHE_DST/blobs"   # snapshots 已是实体文件，blobs 冗余
         echo -e "${GREEN}[✓] 模型缓存已复制 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
         return 0
     fi
@@ -225,6 +226,7 @@ print('  下载完成')
         echo -e "${YELLOW}[!] 正在复制到项目目录...${NC}"
         mkdir -p "$(dirname "$HF_CACHE_DST")"
         cp -rL "$HF_CACHE_SRC" "$HF_CACHE_DST"
+        rm -rf "$HF_CACHE_DST/blobs"   # snapshots 已是实体文件，blobs 冗余
         echo -e "${GREEN}[✓] 模型缓存已就绪 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
     else
         echo ""
@@ -371,7 +373,7 @@ cmd_update() {
     check_model_cache
     docker compose down
     docker compose build --no-cache lili-bot
-    docker compose up -d lili-bot
+    docker compose up -d
     echo -e "${GREEN}[✓] 更新完成${NC}"
     echo "查看日志: ./deploy.sh logs"
 }
