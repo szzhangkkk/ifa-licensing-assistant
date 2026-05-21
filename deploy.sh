@@ -160,8 +160,9 @@ check_vectordb() {
     fi
     echo -e "${GREEN}[✓] 知识库已就绪 (Milvus Lite: $(du -h milvus.db | cut -f1))${NC}"
 
-    if [ -d "chroma_db" ] && [ -f "chroma_db/chroma.sqlite3" ]; then
-        echo -e "${GREEN}[✓] ChromaDB 降级备选已就绪${NC}"
+    if [ ! -d "chroma_db" ]; then
+        echo -e "${YELLOW}[!] chroma_db/ 不存在，创建空目录（防止 Dockerfile COPY 失败）${NC}"
+        mkdir -p chroma_db
     fi
 }
 
@@ -201,13 +202,19 @@ check_model_cache() {
     # 仅需 huggingface-hub（~5MB），不需要 sentence-transformers + torch（~2GB）
     if ! python3 -c "import huggingface_hub" 2>/dev/null; then
         echo -e "${YELLOW}[!] 正在安装 huggingface-hub（轻量依赖，约 5MB）...${NC}"
+        local pip_ok=0
         if python3 -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
-            :
-        elif command -v pip3 &>/dev/null && pip3 install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
-            :
-        elif command -v pip &>/dev/null && pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
-            :
-        else
+            pip_ok=1
+        elif command -v pip3 &>/dev/null; then
+            if pip3 install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
+                pip_ok=1
+            fi
+        elif command -v pip &>/dev/null; then
+            if pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
+                pip_ok=1
+            fi
+        fi
+        if [ "$pip_ok" -ne 1 ]; then
             echo ""
             echo -e "${RED}[错误] 无法安装 huggingface-hub（pip 不可用）${NC}"
             echo ""

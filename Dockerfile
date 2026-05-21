@@ -29,10 +29,15 @@ WORKDIR /app
 # ── Python 依赖 ──
 # 先装 CPU 版 torch（必须用 --index-url 指向 pytorch CPU 源，
 # 避免清华源拉到 CUDA 版 ~2GB）
+# 国内 download.pytorch.org 不可达时 fallback 到清华源
 RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu \
     --trusted-host download.pytorch.org \
-    torch
+    torch \
+    || pip install --no-cache-dir \
+        --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        torch
 
 # 其余依赖走清华源（国内更快）
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
