@@ -6,17 +6,16 @@
 # 停止:  docker compose down
 # 日志:  docker compose logs -f lili-bot
 #
-# 镜像来源：阿里云 ACR（registry.cn-hangzhou.aliyuncs.com）
-#   构建机先用 docker-compose.build.yml 构建 → push → 部署端 pull
+# lili-bot 镜像来自阿里云 ACR（registry.cn-hangzhou.aliyuncs.com）
+#   构建机: docker-compose.build.yml → build → push ACR
+#   部署端: docker compose pull → up（无需 build）
 #   部署端不需要 milvus.db / hf_model_cache/，都在镜像里
+#
+# ngrok 镜像走 Docker Hub（~20MB，无需加速）
 #
 # 包含两个服务：
 #   1. lili-bot     — Flask 回调服务器（核心）
 #   2. ngrok        — 内网穿透（可选，有公网 IP 可去掉）
-#
-# ngrok 镜像也走 ACR，避免部署端拉 Docker Hub
-#   docker tag ngrok/ngrok:latest registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
-#   docker push registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
 # ============================================================
 
 services:
@@ -65,9 +64,9 @@ services:
         max-file: "3"
 
   # ── ngrok 内网穿透（可选） ──
-  # 如果服务器有公网 IP 或使用其他穿透方案，可以注释掉整个 ngrok 服务
+  # 有公网 IP 可以注释掉整个 ngrok 服务
   ngrok:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${IMAGE_NAMESPACE:-ifa}/ngrok:latest
+    image: ngrok/ngrok:latest
     container_name: lili-ngrok
     restart: unless-stopped
     depends_on:

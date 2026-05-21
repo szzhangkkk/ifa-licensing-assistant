@@ -86,6 +86,64 @@ check_docker() {
     echo -e "${GREEN}[✓] Docker 环境已就绪${NC}"
 }
 
+check_acr_login() {
+    # 检查是否已登录 ACR
+    local auth_ok=0
+
+    # 检查 Docker config 中是否有该 registry 的凭证
+    if [ -f ~/.docker/config.json ]; then
+        if python3 -c "
+import json, sys
+try:
+    config = json.load(open('$HOME/.docker/config.json'))
+    auths = config.get('auths', {})
+    if '${REGISTRY}' in auths:
+        sys.exit(0)
+    # 也检查 credential helpers
+    if config.get('credsStore') or config.get('credHelpers'):
+        sys.exit(0)
+except: pass
+sys.exit(1)
+" 2>/dev/null; then
+            auth_ok=1
+        fi
+    fi
+
+    # 如果 config 没有，尝试 docker system info 检查
+    if [ "$auth_ok" -ne 1 ]; then
+        echo ""
+        echo -e "${YELLOW}[!] 未检测到 ${REGISTRY} 的登录凭证${NC}"
+        echo ""
+        echo "  部署需要从阿里云 ACR 拉取镜像，请先登录："
+        echo ""
+        echo "    docker login --username=你的阿里云账号 ${REGISTRY}"
+        echo ""
+        echo "  密码是 ACR「访问凭证」页面设置的 Registry 密码"
+        echo "  （不是阿里云登录密码！）"
+        echo "  设置地址: https://cr.console.aliyun.com → 访问凭证"
+        echo ""
+
+        read -p "  是否现在登录? [Y/n] " -r
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            echo ""
+            echo -e "${RED}[错误] 必须先登录 ACR 才能部署${NC}"
+            exit 1
+        fi
+
+        docker login "${REGISTRY}" || {
+            echo ""
+            echo -e "${RED}[错误] ACR 登录失败${NC}"
+            echo "  请检查:"
+            echo "  1. 用户名: 阿里云账号（手机号/邮箱）"
+            echo "  2. 密码:   ACR 访问凭证密码（不是阿里云登录密码）"
+            echo "  3. 是否已开通容器镜像服务: https://cr.console.aliyun.com"
+            exit 1
+        }
+    fi
+
+    echo -e "${GREEN}[✓] ACR 登录状态正常 (${REGISTRY})${NC}"
+}
+
 check_env() {
     if [ ! -f ".env" ]; then
         echo -e "${YELLOW}[!] 未找到 .env 文件${NC}"
@@ -320,6 +378,7 @@ cmd_push() {
 cmd_pull() {
     check_docker
     check_env
+    check_acr_login
 
     echo ""
     echo "  拉取镜像: ${FULL_IMAGE}"
@@ -337,6 +396,7 @@ cmd_deploy() {
     print_banner
     check_docker
     check_env
+    check_acr_login
 
     echo ""
     echo "  部署配置:"
@@ -457,6 +517,7 @@ cmd_update() {
     print_banner
     check_docker
     check_env
+    check_acr_login
 
     echo ""
     echo "  当前镜像: ${FULL_IMAGE}"

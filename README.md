@@ -69,11 +69,15 @@ cd ifa-licensing-assistant
 cp .env.example .env
 nano .env
 
-# 3. 一键部署
+# 3. 登录 ACR + 一键部署
+docker login --username=你的阿里云账号 registry.cn-hangzhou.aliyuncs.com
 ./deploy.sh
 ```
 
-脚本自动完成：**登录 ACR → 拉取镜像 → 启动服务 → 健康检查**。
+> **关于 docker login：** 只需要执行一次，凭证会保存在本地。密码是阿里云 ACR「访问凭证」页面设置的 Registry 密码（不是阿里云登录密码）。  
+> 如果忘了登录，deploy.sh 会自动检测并提示。
+
+脚本自动完成：**检查 ACR 登录 → 拉取镜像 → 启动服务 → 健康检查**。
 
 > 首次部署需要登录阿里云 ACR，脚本会提示你输入账号密码。  
 > 阿里云容器镜像服务个人版完全免费，只用来拉镜像，无需额外配置。
@@ -202,18 +206,6 @@ IMAGE_TAG=v1.2.0 ./deploy.sh update    # 回滚到旧版本
 IMAGE_TAG=latest ./deploy.sh update    # 回到最新版
 ```
 
-### 同时推送 ngrok 镜像（可选）
-
-如果部署端拉 ngrok 镜像也慢，可以把 ngrok 也推到 ACR：
-
-```bash
-docker pull ngrok/ngrok:latest
-docker tag ngrok/ngrok:latest registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
-docker push registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
-```
-
----
-
 ## 本地开发
 
 不依赖 Docker，直接在本地跑（需要 Python 3.12）：
@@ -293,8 +285,9 @@ ifa-licensing-assistant/
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| `pull` 报 `unauthorized` | 未登录 ACR | `docker login --username=阿里云账号 registry.cn-hangzhou.aliyuncs.com` |
-| `pull` 很慢或超时 | 网络问题 | 检查是否能在服务器上 ping 通 `registry.cn-hangzhou.aliyuncs.com` |
+| `pull` 报 `unauthorized` 或 `access denied` | 未登录 ACR | `docker login --username=阿里云账号 registry.cn-hangzhou.aliyuncs.com`；deploy.sh 也会自动检测并提示 |
+| `pull` 报 `repository does not exist` | 镜像还没推送到 ACR | 维护者需在构建机上执行 `./deploy.sh push` |
+| `pull` 很慢或超时 | 网络问题 | 检查能否 ping 通 `registry.cn-hangzhou.aliyuncs.com` |
 | 服务启动失败 | `.env` 未配置 | `cp .env.example .env` 并填入 `WORKTOOL_ROBOT_ID` |
 | 容器不断重启 | 内存不足 | 确认服务器 ≥ 1.5G 可用内存 |
 
