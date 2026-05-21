@@ -78,6 +78,44 @@ check_docker() {
     fi
 
     echo -e "${GREEN}[✓] Docker 环境已就绪${NC}"
+
+    # 检查 Docker Hub 连通性
+    echo -n "  检查 Docker Hub 连通性..."
+    if curl -s --connect-timeout 5 --max-time 10 https://registry-1.docker.io/v2/ > /dev/null 2>&1; then
+        echo -e " ${GREEN}OK${NC}"
+    else
+        echo -e " ${RED}不可达${NC}"
+        echo ""
+        echo -e "${RED}╔═══════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  Docker Hub 无法访问！国内网络被墙了。           ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo "  必须配置 Docker 镜像加速，否则无法拉取基础镜像 (python:3.12-slim)"
+        echo ""
+        echo "  方案一 — 阿里云镜像加速（推荐，免费）："
+        echo "    1. 打开 https://cr.console.aliyun.com → 镜像工具 → 镜像加速器"
+        echo "    2. 复制你的专属加速地址"
+        echo "    3. 执行以下命令："
+        echo ""
+        echo "    sudo mkdir -p /etc/docker"
+        echo "    sudo tee /etc/docker/daemon.json <<'EOF'"
+        echo '    {'
+        echo '      "registry-mirrors": ["https://你的ID.mirror.aliyuncs.com"]'
+        echo '    }'
+        echo '    EOF'
+        echo "    sudo systemctl daemon-reload"
+        echo "    sudo systemctl restart docker"
+        echo ""
+        echo "  方案二 — 如果 IPv6 导致超时，禁用 IPv6："
+        echo "    sudo tee /etc/docker/daemon.json <<'EOF'"
+        echo '    {'
+        echo '      "ipv6": false,'
+        echo '      "fixed-cidr-v6": ""'
+        echo '    }'
+        echo '    EOF'
+        echo "    sudo systemctl restart docker"
+        echo ""
+    fi
 }
 
 check_env() {
@@ -269,7 +307,7 @@ cmd_deploy() {
 
     echo ""
     echo "  [1/2] 构建 Docker 镜像..."
-    docker compose build --progress=plain
+    docker compose build --progress plain
 
     echo ""
     echo "  [2/2] 启动服务..."
@@ -372,7 +410,7 @@ cmd_update() {
     echo "  重新构建镜像 + 重启..."
     echo ""
 
-    docker compose build --no-cache --progress=plain
+    docker compose build --no-cache --progress plain
     docker compose up -d --force-recreate
 
     echo ""
@@ -412,7 +450,7 @@ cmd_push() {
 
     echo ""
     echo "  [1/3] 构建镜像..."
-    docker compose build --no-cache --progress=plain
+    docker compose build --no-cache --progress plain
 
     echo ""
     echo "  [2/3] 打标签..."
