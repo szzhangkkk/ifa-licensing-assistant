@@ -11,7 +11,7 @@ FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="IFA 上牌小助手 (Lili Bot)"
 LABEL org.opencontainers.image.description="企业微信 WorkTool 群消息 AI 助手，Milvus 向量检索 + Docker 一键部署"
-LABEL org.opencontainers.image.version="1.2.0"
+LABEL org.opencontainers.image.version="1.3.0"
 
 # ── 系统依赖 ──
 # 使用阿里云镜像加速（国内下载 Debian 包更快）
@@ -20,25 +20,28 @@ RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/source
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # ── 工作目录 ──
 WORKDIR /app
 
-# ── Python 依赖（先 pip install，利用 Docker 层缓存）──
-# 使用清华 PyPI 镜像（国内下载更快）
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
+# ── Python 依赖 ──
+# 先装 CPU 版 torch（必须用 --index-url 指向 pytorch CPU 源，
+# 避免清华源拉到 CUDA 版 ~2GB）
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --trusted-host download.pytorch.org \
+    torch
 
-# 先装 CPU 版 torch（避免拉取 ~2GB CUDA 全家桶，纯 CPU 部署不需要）
-# --extra-index-url 不覆盖 PIP_INDEX_URL（清华源），国内下载更快
-# 仅在清华源缺少 CPU wheel 时才回退到 pytorch.org
-RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
+# 其余依赖走清华源（国内更快）
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Embedding 模型（宿主机预下载 → COPY 进镜像，彻底离线）──
-# 模型在宿主机 ~/.cache/huggingface/ 已下载，deploy.sh 构建前自动复制到 hf_model_cache/
+# 模型由 deploy.sh 在构建前自动复制到 hf_model_cache/
 ENV HF_HUB_OFFLINE=1
 COPY hf_model_cache/ /root/.cache/huggingface/hub/
 
@@ -63,8 +66,9 @@ ENV CHROMA_DB_PATH=/app/chroma_db
 ENV CHROMA_COLLECTION=ifa_licensing_kb
 
 # ── 健康检查 ──
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
+# start-period=60s：模型加载 + Milvus 初始化首次可能较慢
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:5000/health > /dev/null 2>&1 || exit 1
 
 # ── 启动 ──
 CMD ["python3", "app.py"]

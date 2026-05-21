@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+.eggs/
+*.egg-info/
 
 # 备份
 *.backup/
@@ -11,21 +13,55 @@ chroma_db.backup/
 
 # Git
 .git/
+.gitignore
 
-# 环境变量（不要打包进镜像）
+# 环境变量（不要打包进镜像，含密钥）
 .env
 .env.local
+.env.production
+.env.example
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# 测试
+# 测试文件
 test_*.py
 check_*.py
 
-# 知识库源文档
-Agent5-Lili_cleaned.md
+# 部署脚本（不需要打进镜像）
+deploy.sh
+README.md
 
-# macOS
+# 知识库源文档和构建脚本（不需要打进镜像）
+Agent5-Lili_cleaned.md
+rebuild_kb.py
+rebuild_kb_v2.py
+
+# Python 工具脚本（不需要打进镜像）
+add_iqe_chunks.py
+iqe_supplement_chunks.json
+ifa_doc_push.py
+ifa_email_setup.py
+ifa_ia_guide.py
+ifa_training_reminder.py
+ifa_wecom_sender.py
+ifa_welcome_flow.py
+
+# HF 模型缓存（需要！COPY 进镜像，不能排除）
+# hf_model_cache/  ← 故意不排除
+
+# macOS / Windows
 .DS_Store
+Thumbs.db
+
+# Docker 自身
+Dockerfile
+docker-compose.yml
+docker-compose.override.yml
+
+# 临时文件
+*.log
+/tmp/

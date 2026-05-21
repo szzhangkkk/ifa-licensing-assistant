@@ -56,6 +56,21 @@ services:
       - lili-data:/tmp
     networks:
       - lili-net
+    # 资源限制（远程服务器资源有限，防止 OOM）
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    # 日志轮转（防止 json-file 默认无限增长撑爆磁盘）
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   # ── ngrok 内网穿透（可选） ──
   # 如果服务器有公网 IP 或使用其他穿透方案，可以注释掉整个 ngrok 服务
@@ -77,6 +92,11 @@ services:
     # 暴露 ngrok 的 API 端口以便查询公网地址
     ports:
       - "4040:4040"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
 
 volumes:
   lili-data:

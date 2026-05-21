@@ -38,7 +38,7 @@ print_banner() {
     echo ""
     echo -e "${BLUE}╔═══════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║     IFA 上牌小助手 (Lili Bot) — 一键部署        ║${NC}"
-    echo -e "${BLUE}║                v1.2.0                            ║${NC}"
+    echo -e "${BLUE}║                v1.3.0                            ║${NC}"
     echo -e "${BLUE}╚═══════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -52,6 +52,14 @@ check_docker() {
 
     if ! docker compose version &> /dev/null; then
         echo -e "${RED}[错误] 未检测到 Docker Compose，请安装 Docker Desktop 或 docker-compose-plugin${NC}"
+        exit 1
+    fi
+
+    # 检查 curl（deploy.sh 健康检查依赖它）
+    if ! command -v curl &> /dev/null; then
+        echo -e "${RED}[错误] 未检测到 curl，请先安装:${NC}"
+        echo "  sudo apt install curl        # Debian/Ubuntu"
+        echo "  sudo yum install curl        # CentOS/RHEL"
         exit 1
     fi
 
@@ -183,26 +191,25 @@ check_model_cache() {
         return 0
     fi
 
-    # 3) 都没有 → 宿主机下载（用 hf-mirror.com 镜像，国内更快）
+    # 3) 都没有 → 宿主机下载（用 huggingface-hub，比 sentence-transformers 轻量得多）
     echo ""
     echo -e "${YELLOW}[!] 首次部署：正在下载 embedding 模型 (约 470MB, 可能需要 2-5 分钟)...${NC}"
     echo "  模型: sentence-transformers/${MODEL_NAME}"
     echo "  镜像: https://hf-mirror.com (HuggingFace 国内镜像)"
     echo ""
 
-    # 检查 sentence_transformers 是否已安装（宿主机需要）
-    if ! python3 -c "import sentence_transformers" 2>/dev/null; then
-        echo -e "${YELLOW}[!] 宿主机未安装 sentence_transformers，正在安装...${NC}"
-        # 多重 fallback：python3 -m pip → pip3 → pip → apt
-        if python3 -m pip install --quiet sentence-transformers 2>/dev/null; then
+    # 仅需 huggingface-hub（~5MB），不需要 sentence-transformers + torch（~2GB）
+    if ! python3 -c "import huggingface_hub" 2>/dev/null; then
+        echo -e "${YELLOW}[!] 正在安装 huggingface-hub（轻量依赖，约 5MB）...${NC}"
+        if python3 -m pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
             :
-        elif command -v pip3 &>/dev/null && pip3 install --quiet sentence-transformers 2>/dev/null; then
+        elif command -v pip3 &>/dev/null && pip3 install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
             :
-        elif command -v pip &>/dev/null && pip install --quiet sentence-transformers 2>/dev/null; then
+        elif command -v pip &>/dev/null && pip install --quiet -i https://pypi.tuna.tsinghua.edu.cn/simple huggingface-hub 2>/dev/null; then
             :
         else
             echo ""
-            echo -e "${RED}[错误] 无法安装 sentence_transformers（pip 不可用）${NC}"
+            echo -e "${RED}[错误] 无法安装 huggingface-hub（pip 不可用）${NC}"
             echo ""
             echo "  请手动安装 pip 后再试:"
             echo "    sudo apt install python3-pip        # Debian/Ubuntu"
@@ -212,13 +219,24 @@ check_model_cache() {
         fi
     fi
 
-    # 下载模型到宿主机 HF 缓存（HF_ENDPOINT 用镜像站）
-    if HF_ENDPOINT=https://hf-mirror.com python3 -c "
-from sentence_transformers import SentenceTransformer
-print('  下载中...')
-SentenceTransformer('${MODEL_NAME}')
-print('  下载完成')
+    # 用 huggingface-hub 下载模型文件到默认 HF 缓存（纯文件下载，不加载到内存）
+    # 加 3 次重试，间隔 5 秒（hf-mirror.com 网络抖动时自动恢复）
+    local download_ok=0
+    for attempt in 1 2 3; do
+        echo "  第 ${attempt}/3 次尝试下载..."
+        if HF_ENDPOINT=https://hf-mirror.com python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id='sentence-transformers/${MODEL_NAME}')
 " 2>&1; then
+            download_ok=1
+            break
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            echo -e "${YELLOW}  下载失败，5 秒后重试...${NC}"
+            sleep 5
+        fi
+    done
+    if [ "$download_ok" -eq 1 ]; then
         echo ""
         echo -e "${GREEN}[✓] 模型下载完成${NC}"
 
@@ -230,7 +248,7 @@ print('  下载完成')
         echo -e "${GREEN}[✓] 模型缓存已就绪 ($(du -sh "$HF_CACHE_DST" | cut -f1))${NC}"
     else
         echo ""
-        echo -e "${RED}[错误] 模型下载失败${NC}"
+        echo -e "${RED}[错误] 模型下载失败（已重试 3 次）${NC}"
         echo ""
         echo "  可能的原因:"
         echo "  1. 网络无法访问 hf-mirror.com"
@@ -238,7 +256,9 @@ print('  下载完成')
         echo ""
         echo "  手动下载方法:"
         echo "    HF_ENDPOINT=https://hf-mirror.com python3 -c \\"
-        echo "      \"from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_NAME}')\""
+        echo "      \"from huggingface_hub import snapshot_download; \\"
+        echo "       snapshot_download('sentence-transformers/${MODEL_NAME}', \\"
+        echo "         local_dir='~/.cache/huggingface/hub/models--sentence-transformers--${MODEL_NAME}')\""
         echo ""
         exit 1
     fi
@@ -288,7 +308,7 @@ cmd_deploy() {
     echo "  [1/3] 构建 Docker 镜像..."
 
     # 构建 Docker 镜像（ngrok 和 lili-bot 共用一个 compose 文件）
-    docker compose build
+    docker compose build --progress=plain
 
     echo ""
     echo "  [2/3] 启动服务..."
@@ -313,10 +333,18 @@ cmd_deploy() {
     fi
 
     echo ""
-    echo "  [3/3] 验证服务..."
+    echo "  [3/3] 验证服务（等待模型加载，最长 90 秒）..."
 
-    sleep 3
-    if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+    local wait_ok=0
+    for i in $(seq 1 18); do
+        if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+            wait_ok=1
+            break
+        fi
+        sleep 5
+        echo "    等待中... ($((i * 5))s)"
+    done
+    if [ "$wait_ok" -eq 1 ]; then
         echo -e "${GREEN}  [✓] 健康检查通过!${NC}"
         echo ""
         echo -e "${BLUE}╔═══════════════════════════════════════════════════╗${NC}"
@@ -372,7 +400,7 @@ cmd_update() {
     echo "更新 Lili Bot..."
     check_model_cache
     docker compose down
-    docker compose build --no-cache lili-bot
+    docker compose build --no-cache --progress=plain lili-bot
     docker compose up -d
     echo -e "${GREEN}[✓] 更新完成${NC}"
     echo "查看日志: ./deploy.sh logs"
