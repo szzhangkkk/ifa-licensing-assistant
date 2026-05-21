@@ -1,28 +1,18 @@
 # ============================================================
-# IFA 上牌小助手 — Docker Compose 编排（部署端）
+# IFA 上牌小助手 — Docker Compose（构建机专用）
 # ============================================================
-# 启动:  ./deploy.sh              # 一键 pull + up（推荐）
-#        docker compose pull && docker compose up -d
-# 停止:  docker compose down
-# 日志:  docker compose logs -f lili-bot
+# 用法:
+#   docker compose -f docker-compose.build.yml build --no-cache
+#   docker tag ifa-lili-bot:latest registry.cn-hangzhou.aliyuncs.com/ifa/lili-bot:latest
+#   docker push registry.cn-hangzhou.aliyuncs.com/ifa/lili-bot:latest
 #
-# 镜像来源：阿里云 ACR（registry.cn-hangzhou.aliyuncs.com）
-#   构建机先用 docker-compose.build.yml 构建 → push → 部署端 pull
-#   部署端不需要 milvus.db / hf_model_cache/，都在镜像里
-#
-# 包含两个服务：
-#   1. lili-bot     — Flask 回调服务器（核心）
-#   2. ngrok        — 内网穿透（可选，有公网 IP 可去掉）
-#
-# ngrok 镜像也走 ACR，避免部署端拉 Docker Hub
-#   docker tag ngrok/ngrok:latest registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
-#   docker push registry.cn-hangzhou.aliyuncs.com/ifa/ngrok:latest
+# 此文件仅供构建/CI 机使用，部署端请用 docker-compose.yml
 # ============================================================
 
 services:
-  # ── 核心服务：Lili Bot Flask 服务器 ──
   lili-bot:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${IMAGE_NAMESPACE:-ifa}/lili-bot:${IMAGE_TAG:-latest}
+    build: .
+    image: ifa-lili-bot:latest
     container_name: lili-bot
     restart: unless-stopped
     ports:
@@ -35,7 +25,6 @@ services:
       - CHROMA_DB_PATH=/app/chroma_db
       - CHROMA_COLLECTION=ifa_licensing_kb
       - HF_HUB_OFFLINE=1
-      # 以下从 .env 文件读取
       - WORKTOOL_ROBOT_ID=${WORKTOOL_ROBOT_ID}
       - WORKTOOL_API_URL=${WORKTOOL_API_URL:-https://api.worktool.ymdyes.cn/wework/sendRawMessage}
       - SUBMIT_EMAIL=${SUBMIT_EMAIL:-license@example.com}
@@ -44,11 +33,9 @@ services:
       - WECOM_BOT_ID=${WECOM_BOT_ID:-}
       - WECOM_BOT_SECRET=${WECOM_BOT_SECRET:-}
     volumes:
-      # 持久化 pending 状态（避免容器重启丢失）
       - lili-data:/tmp
     networks:
       - lili-net
-    # 资源限制（远程服务器资源有限，防止 OOM）
     deploy:
       resources:
         limits:
@@ -57,17 +44,14 @@ services:
         reservations:
           memory: 512M
           cpus: "0.5"
-    # 日志轮转（防止 json-file 默认无限增长撑爆磁盘）
     logging:
       driver: json-file
       options:
         max-size: "20m"
         max-file: "3"
 
-  # ── ngrok 内网穿透（可选） ──
-  # 如果服务器有公网 IP 或使用其他穿透方案，可以注释掉整个 ngrok 服务
   ngrok:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${IMAGE_NAMESPACE:-ifa}/ngrok:latest
+    image: ngrok/ngrok:latest
     container_name: lili-ngrok
     restart: unless-stopped
     depends_on:
@@ -81,7 +65,6 @@ services:
       - NGROK_AUTHTOKEN=${NGROK_AUTH_TOKEN}
     networks:
       - lili-net
-    # 暴露 ngrok 的 API 端口以便查询公网地址
     ports:
       - "4040:4040"
     logging:

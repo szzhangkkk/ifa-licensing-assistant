@@ -1,7 +1,7 @@
 # IFA 上牌小助手 (Lili Bot)
 
 > 企业微信 WorkTool 群消息 AI 助手 — 支持上牌流程引导、知识库问答、Docker 一键部署  
-> **v1.2.0 — Milvus Lite 向量检索引擎，ChromaDB 自动降级**
+> **v1.3.0 — 预构建 ACR 镜像部署，Milvus Lite 向量检索引擎**
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
@@ -62,11 +62,14 @@ cd ifa-licensing-assistant
 cp .env.example .env
 nano .env
 
-# 一键部署
+# 一键部署（自动从 ACR 拉取预构建镜像 + 启动）
 ./deploy.sh
 ```
 
-脚本自动完成：环境检查 → 配置引导 → 镜像构建 → 服务启动 → 健康验证。
+脚本自动完成：环境检查 → 配置引导 → **从 ACR 拉取镜像** → 服务启动 → 健康验证。  
+部署时间：首次 2-5 分钟（拉取完整镜像），后续更新 < 30 秒。
+
+> 镜像托管在阿里云 ACR（`registry.cn-hangzhou.aliyuncs.com/ifa/lili-bot`），国内直连，无需 Docker Hub 加速器。
 
 ### 配置 WorkTool 回调
 
@@ -87,10 +90,34 @@ print(d['tunnels'][0]['public_url'])
 
 ```bash
 ./deploy.sh logs      # 实时日志
-./deploy.sh status    # 服务状态
+./deploy.sh status    # 服务状态 + 镜像信息
 ./deploy.sh stop      # 停止
-./deploy.sh update    # 更新重启
+./deploy.sh restart   # 重启（不拉取新镜像）
+./deploy.sh update    # 拉取最新镜像 + 重启
 ```
+
+---
+
+## 构建与发布（在构建机上操作）
+
+当代码或知识库更新后，重新构建镜像并推送到 ACR：
+
+```bash
+# 前提：已登录 ACR
+docker login --username=你的阿里云账号 registry.cn-hangzhou.aliyuncs.com
+
+# 一键构建 + 推送
+./deploy.sh push
+
+# 或分步操作
+./deploy.sh build                                      # 本地构建
+docker tag ifa-lili-bot:latest registry.cn-hangzhou.aliyuncs.com/ifa/lili-bot:latest
+docker push registry.cn-hangzhou.aliyuncs.com/ifa/lili-bot:latest
+```
+
+部署端执行 `./deploy.sh` 即可拉取最新镜像。
+
+> 首次推送前请在阿里云 [容器镜像服务](https://cr.console.aliyun.com) 创建命名空间 `ifa`（个人版免费）。
 
 ---
 
@@ -114,6 +141,9 @@ gunicorn app:app -b 0.0.0.0:5000 -w 2 --access-logfile -
 | 变量 | 必需 | 说明 | 默认值 |
 |------|:--:|------|--------|
 | `WORKTOOL_ROBOT_ID` | **是** | WorkTool 机器人 ID | — |
+| `REGISTRY` | 否 | 镜像仓库地址 | `registry.cn-hangzhou.aliyuncs.com` |
+| `IMAGE_NAMESPACE` | 否 | 镜像命名空间 | `ifa` |
+| `IMAGE_TAG` | 否 | 镜像版本标签 | `latest` |
 | `MILVUS_DB_PATH` | 否 | Milvus Lite 数据库路径 | `./milvus.db` |
 | `CHROMA_DB_PATH` | 否 | ChromaDB 降级备选路径 | `./chroma_db` |
 | `NGROK_AUTH_TOKEN` | 推荐 | ngrok 认证令牌 | — |
@@ -153,8 +183,10 @@ gunicorn app:app -b 0.0.0.0:5000 -w 2 --access-logfile -
 ```
 ifa-licensing-assistant/
 ├── app.py                  # ★ 主程序（Flask + RAG + 状态机）
-├── deploy.sh               # ★ 一键部署脚本
-├── Dockerfile / docker-compose.yml
+├── deploy.sh               # ★ 一键部署/构建/推送脚本
+├── Dockerfile
+├── docker-compose.yml      # 部署端：拉取 ACR 镜像
+├── docker-compose.build.yml # 构建机：本地构建镜像
 ├── .env.example / requirements.txt
 ├── milvus.db               # ★ Milvus Lite 预构建知识库 (25 chunks)
 ├── chroma_db/              # ChromaDB 降级备选
@@ -185,7 +217,9 @@ curl http://localhost:5000/health
 | 现象 | 原因 | 解决 |
 |------|------|------|
 | 服务启动失败 | `.env` 未配置 | 编辑 `.env` 填入 `WORKTOOL_ROBOT_ID` |
+| `docker compose pull` 很慢/失败 | 未登录 ACR | `docker login --username=阿里云账号 registry.cn-hangzhou.aliyuncs.com` |
 | 知识库未找到 | milvus.db 不存在 | `python3 rebuild_kb_v2.py` |
+| `./deploy.sh build` 失败 | hf_model_cache/ 或 milvus.db 缺失 | 部署端不再需要 build，可直接 pull |
 | 回复乱码 | AI 引擎类型不是 OpenClaw | WorkTool 后台改为 OpenClaw |
 | API 返回 501 | 机器人不在线 | WTApp 确保在线 |
 | 功能二不发资料 | pending 状态残留 | 清空 `/tmp/ifa_pending_license_reply.txt` |
@@ -197,9 +231,11 @@ curl http://localhost:5000/health
 
 ```bash
 # 1. 更新源文档 Agent5-Lili_cleaned.md
-# 2. 重建
+# 2. 重建知识库
 python3 rebuild_kb_v2.py
-# 3. 重启 (Docker)
+# 3. 构建 + 推送新镜像（在构建机上）
+./deploy.sh push
+# 4. 部署端拉取新镜像
 ./deploy.sh update
 ```
 
