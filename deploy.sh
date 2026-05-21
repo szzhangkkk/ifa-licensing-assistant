@@ -3,21 +3,18 @@
 # IFA 上牌小助手 (Lili Bot) — 一键部署脚本
 # ============================================================
 # 用法:
-#   ./deploy.sh              # 拉取镜像 + 启动（部署端）
-#   ./deploy.sh build        # 本地构建镜像（构建机）
-#   ./deploy.sh push         # 构建 + 推送到 ACR（构建机）
-#   ./deploy.sh pull         # 从 ACR 拉取最新镜像
+#   ./deploy.sh              # 构建镜像 + 启动（默认）
+#   ./deploy.sh quick        # 快速部署（跳过确认）
+#   ./deploy.sh no-ngrok     # 不使用 ngrok 部署
+#   ./deploy.sh update       # 重新构建 + 重启
 #   ./deploy.sh stop         # 停止服务
 #   ./deploy.sh logs         # 查看日志
 #   ./deploy.sh status       # 查看状态
-#   ./deploy.sh restart      # 重启服务
-#   ./deploy.sh update       # 拉取新镜像 + 重建容器
-#   ./deploy.sh quick        # 快速部署（跳过确认）
-#   ./deploy.sh no-ngrok     # 不使用 ngrok 部署
+#   ./deploy.sh restart      # 重启服务（不重新构建）
 #
-# 架构：
-#   构建机: docker-compose.build.yml → build → tag → push ACR
-#   部署端: docker-compose.yml → pull → up（不再现场构建）
+# ACR 高级用法（需要阿里云账号）:
+#   ./deploy.sh push         # 构建 + 推送到 ACR
+#   ./deploy.sh pull         # 从 ACR 拉取镜像
 # ============================================================
 
 set -e
@@ -33,13 +30,10 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ── 镜像仓库配置（可通过 .env 覆盖）──
-REGISTRY="${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
-NAMESPACE="${IMAGE_NAMESPACE:-ifa}"
-IMAGE_NAME="lili-bot"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-FULL_IMAGE="${REGISTRY}/${NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}"
-BUILD_COMPOSE_FILE="docker-compose.build.yml"
+# ── ACR 配置（仅 push/pull 命令使用）──
+ACR_REGISTRY="${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
+ACR_NAMESPACE="${ACR_NAMESPACE:-ifa}"
+ACR_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/lili-bot:${IMAGE_TAG:-latest}"
 
 # ────────────────────────────────────────
 # 工具函数
@@ -62,7 +56,7 @@ check_docker() {
     fi
 
     if ! docker compose version &> /dev/null; then
-        echo -e "${RED}[错误] 未检测到 Docker Compose，请安装 Docker Desktop 或 docker-compose-plugin${NC}"
+        echo -e "${RED}[错误] 未检测到 Docker Compose${NC}"
         exit 1
     fi
 
@@ -84,64 +78,6 @@ check_docker() {
     fi
 
     echo -e "${GREEN}[✓] Docker 环境已就绪${NC}"
-}
-
-check_acr_login() {
-    # 检查是否已登录 ACR
-    local auth_ok=0
-
-    # 检查 Docker config 中是否有该 registry 的凭证
-    if [ -f ~/.docker/config.json ]; then
-        if python3 -c "
-import json, sys
-try:
-    config = json.load(open('$HOME/.docker/config.json'))
-    auths = config.get('auths', {})
-    if '${REGISTRY}' in auths:
-        sys.exit(0)
-    # 也检查 credential helpers
-    if config.get('credsStore') or config.get('credHelpers'):
-        sys.exit(0)
-except: pass
-sys.exit(1)
-" 2>/dev/null; then
-            auth_ok=1
-        fi
-    fi
-
-    # 如果 config 没有，尝试 docker system info 检查
-    if [ "$auth_ok" -ne 1 ]; then
-        echo ""
-        echo -e "${YELLOW}[!] 未检测到 ${REGISTRY} 的登录凭证${NC}"
-        echo ""
-        echo "  部署需要从阿里云 ACR 拉取镜像，请先登录："
-        echo ""
-        echo "    docker login --username=你的阿里云账号 ${REGISTRY}"
-        echo ""
-        echo "  密码是 ACR「访问凭证」页面设置的 Registry 密码"
-        echo "  （不是阿里云登录密码！）"
-        echo "  设置地址: https://cr.console.aliyun.com → 访问凭证"
-        echo ""
-
-        read -p "  是否现在登录? [Y/n] " -r
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            echo ""
-            echo -e "${RED}[错误] 必须先登录 ACR 才能部署${NC}"
-            exit 1
-        fi
-
-        docker login "${REGISTRY}" || {
-            echo ""
-            echo -e "${RED}[错误] ACR 登录失败${NC}"
-            echo "  请检查:"
-            echo "  1. 用户名: 阿里云账号（手机号/邮箱）"
-            echo "  2. 密码:   ACR 访问凭证密码（不是阿里云登录密码）"
-            echo "  3. 是否已开通容器镜像服务: https://cr.console.aliyun.com"
-            exit 1
-        }
-    fi
-
-    echo -e "${GREEN}[✓] ACR 登录状态正常 (${REGISTRY})${NC}"
 }
 
 check_env() {
@@ -174,10 +110,8 @@ check_env() {
         fi
     fi
 
-    # 加载 .env 变量
     source .env 2>/dev/null || true
 
-    # 检查必需配置
     if [ -z "$WORKTOOL_ROBOT_ID" ] || [ "$WORKTOOL_ROBOT_ID" = "your_robot_id_here" ]; then
         echo ""
         echo -e "${RED}[错误] WORKTOOL_ROBOT_ID 未配置!${NC}"
@@ -186,14 +120,7 @@ check_env() {
         exit 1
     fi
 
-    # 重新计算 FULL_IMAGE（.env 里可能有覆盖）
-    REGISTRY="${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}"
-    NAMESPACE="${IMAGE_NAMESPACE:-ifa}"
-    IMAGE_TAG="${IMAGE_TAG:-latest}"
-    FULL_IMAGE="${REGISTRY}/${NAMESPACE}/${IMAGE_NAME}:${IMAGE_TAG}"
-
     echo -e "${GREEN}[✓] 配置文件已就绪${NC}"
-    echo "  镜像: ${FULL_IMAGE}"
 }
 
 check_vectordb() {
@@ -235,7 +162,7 @@ check_model_cache() {
     fi
 
     echo ""
-    echo -e "${YELLOW}[!] 首次构建：正在下载 embedding 模型 (约 470MB, 可能需要 2-5 分钟)...${NC}"
+    echo -e "${YELLOW}[!] 首次部署：正在下载 embedding 模型 (约 470MB, 可能需要 2-5 分钟)...${NC}"
     echo "  模型: sentence-transformers/${MODEL_NAME}"
     echo "  镜像: https://hf-mirror.com (HuggingFace 国内镜像)"
     echo ""
@@ -311,98 +238,19 @@ check_ngrok_token() {
 # 命令实现
 # ────────────────────────────────────────
 
-cmd_build() {
-    print_banner
-    check_docker
-    check_vectordb
-    check_model_cache
-
-    echo ""
-    echo "  构建镜像（使用 ${BUILD_COMPOSE_FILE}）..."
-    echo ""
-
-    docker compose -f "${BUILD_COMPOSE_FILE}" build --no-cache --progress=plain
-
-    echo ""
-    echo -e "${GREEN}[✓] 镜像构建完成: ifa-lili-bot:latest${NC}"
-    echo ""
-    echo "  下一步 — 推送到 ACR:"
-    echo "    docker tag ifa-lili-bot:latest ${FULL_IMAGE}"
-    echo "    docker push ${FULL_IMAGE}"
-    echo "  或直接:"
-    echo "    ./deploy.sh push"
-    echo ""
-}
-
-cmd_push() {
-    print_banner
-
-    # 检查是否已登录 ACR
-    if ! docker info 2>/dev/null | grep -q "${REGISTRY}" && \
-       ! grep -q "${REGISTRY}" ~/.docker/config.json 2>/dev/null; then
-        echo -e "${YELLOW}[!] 未登录 ${REGISTRY}${NC}"
-        echo ""
-        echo "  请先登录阿里云 ACR:"
-        echo "    docker login --username=你的阿里云账号 ${REGISTRY}"
-        echo ""
-        read -p "  是否现在登录? [Y/n] " -r
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            docker login "${REGISTRY}"
-        else
-            exit 0
-        fi
-    fi
-
-    # 先构建
-    check_vectordb
-    check_model_cache
-    echo ""
-    echo "  [1/3] 构建镜像..."
-    docker compose -f "${BUILD_COMPOSE_FILE}" build --no-cache --progress=plain
-
-    # 打标签
-    echo ""
-    echo "  [2/3] 打标签..."
-    docker tag ifa-lili-bot:latest "${FULL_IMAGE}"
-
-    # 推送
-    echo ""
-    echo "  [3/3] 推送到 ACR..."
-    docker push "${FULL_IMAGE}"
-
-    echo ""
-    echo -e "${GREEN}[✓] 推送完成: ${FULL_IMAGE}${NC}"
-    echo ""
-}
-
-cmd_pull() {
-    check_docker
-    check_env
-    check_acr_login
-
-    echo ""
-    echo "  拉取镜像: ${FULL_IMAGE}"
-    echo ""
-
-    docker compose pull
-
-    echo ""
-    echo -e "${GREEN}[✓] 镜像拉取完成${NC}"
-}
-
 cmd_deploy() {
     local use_ngrok="${1:-yes}"
 
     print_banner
     check_docker
     check_env
-    check_acr_login
+    check_vectordb
+    check_model_cache
 
     echo ""
     echo "  部署配置:"
-    echo "    镜像        : ${FULL_IMAGE}"
     echo "    Robot ID    : ${WORKTOOL_ROBOT_ID:0:12}..."
-    echo "    向量数据库   : Milvus Lite + ChromaDB 降级备选（镜像内置）"
+    echo "    向量数据库   : Milvus Lite + ChromaDB 降级备选"
     echo "    Flask 端口  : ${FLASK_PORT:-5000}"
     if [ "$use_ngrok" = "yes" ]; then
         echo "    ngrok       : 启用"
@@ -420,8 +268,8 @@ cmd_deploy() {
     fi
 
     echo ""
-    echo "  [1/2] 拉取镜像..."
-    docker compose pull
+    echo "  [1/2] 构建 Docker 镜像..."
+    docker compose build --progress=plain
 
     echo ""
     echo "  [2/2] 启动服务..."
@@ -499,7 +347,7 @@ cmd_status() {
     echo ""
     echo "=== 镜像信息 ==="
     docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}" \
-        | grep -E "REPOSITORY|${IMAGE_NAME}|ngrok" 2>/dev/null || true
+        | grep -E "REPOSITORY|ifa-lili-bot|ngrok" 2>/dev/null || true
     echo ""
     echo "=== 健康检查 ==="
     if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
@@ -517,14 +365,14 @@ cmd_update() {
     print_banner
     check_docker
     check_env
-    check_acr_login
+    check_vectordb
+    check_model_cache
 
     echo ""
-    echo "  当前镜像: ${FULL_IMAGE}"
-    echo "  拉取最新镜像 + 重建容器..."
+    echo "  重新构建镜像 + 重启..."
     echo ""
 
-    docker compose pull
+    docker compose build --no-cache --progress=plain
     docker compose up -d --force-recreate
 
     echo ""
@@ -539,20 +387,80 @@ cmd_restart() {
     echo -e "${GREEN}[✓] 服务已重启${NC}"
 }
 
+# ── ACR 命令（可选，需要阿里云账号）──
+
+cmd_push() {
+    print_banner
+    check_docker
+    check_vectordb
+    check_model_cache
+
+    # 检查 ACR 登录
+    if ! grep -q "${ACR_REGISTRY}" ~/.docker/config.json 2>/dev/null; then
+        echo -e "${YELLOW}[!] 未登录 ${ACR_REGISTRY}${NC}"
+        echo ""
+        echo "  请先登录阿里云 ACR:"
+        echo "    docker login --username=你的阿里云账号 ${ACR_REGISTRY}"
+        echo ""
+        read -p "  是否现在登录? [Y/n] " -r
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            docker login "${ACR_REGISTRY}" || exit 1
+        else
+            exit 0
+        fi
+    fi
+
+    echo ""
+    echo "  [1/3] 构建镜像..."
+    docker compose build --no-cache --progress=plain
+
+    echo ""
+    echo "  [2/3] 打标签..."
+    docker tag ifa-lili-bot:latest "${ACR_IMAGE}"
+
+    echo ""
+    echo "  [3/3] 推送到 ACR..."
+    docker push "${ACR_IMAGE}"
+
+    echo ""
+    echo -e "${GREEN}[✓] 推送完成: ${ACR_IMAGE}${NC}"
+}
+
+cmd_pull() {
+    check_docker
+    check_env
+
+    if ! grep -q "${ACR_REGISTRY}" ~/.docker/config.json 2>/dev/null; then
+        echo -e "${YELLOW}[!] 未登录 ${ACR_REGISTRY}${NC}"
+        echo ""
+        echo "  请先登录:"
+        echo "    docker login --username=你的阿里云账号 ${ACR_REGISTRY}"
+        echo ""
+        read -p "  是否现在登录? [Y/n] " -r
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            docker login "${ACR_REGISTRY}" || exit 1
+        else
+            exit 0
+        fi
+    fi
+
+    echo ""
+    echo "  拉取镜像: ${ACR_IMAGE}"
+    echo ""
+
+    docker pull "${ACR_IMAGE}"
+    docker tag "${ACR_IMAGE}" ifa-lili-bot:latest
+
+    echo ""
+    echo -e "${GREEN}[✓] 镜像拉取完成: ifa-lili-bot:latest${NC}"
+    echo "  接下来: ./deploy.sh restart"
+}
+
 # ────────────────────────────────────────
 # 入口
 # ────────────────────────────────────────
 
 case "${1:-}" in
-    build)
-        cmd_build
-        ;;
-    push)
-        cmd_push
-        ;;
-    pull)
-        cmd_pull
-        ;;
     quick)
         cmd_deploy "yes"
         ;;
@@ -574,28 +482,32 @@ case "${1:-}" in
     no-ngrok)
         cmd_deploy "no"
         ;;
+    push)
+        cmd_push
+        ;;
+    pull)
+        cmd_pull
+        ;;
     help|--help|-h)
         echo "用法: ./deploy.sh [命令]"
         echo ""
-        echo "=== 构建机 ==="
-        echo "  build       本地构建镜像（使用 docker-compose.build.yml）"
-        echo "  push        构建 + 推送到 ACR"
-        echo ""
-        echo "=== 部署端 ==="
-        echo "  (无)        拉取镜像 + 启动服务（推荐）"
-        echo "  pull        只拉取最新镜像"
+        echo "=== 常用 ==="
+        echo "  (无)        构建镜像 + 启动（推荐）"
         echo "  quick       快速部署（跳过确认）"
         echo "  no-ngrok    不使用 ngrok 部署"
-        echo "  update      拉取新镜像 + 重建容器"
-        echo "  restart     重启服务（不拉取新镜像）"
+        echo "  update      重新构建 + 重启"
+        echo "  restart     重启服务（不重新构建）"
         echo ""
         echo "=== 运维 ==="
         echo "  stop        停止服务"
         echo "  logs        查看实时日志"
-        echo "  status      查看状态 + 健康检查 + 镜像信息"
-        echo "  help        显示帮助"
+        echo "  status      查看状态 + 健康检查"
         echo ""
-        echo "镜像仓库: ${FULL_IMAGE}"
+        echo "=== ACR（需要阿里云账号）==="
+        echo "  push        构建 + 推送到 ACR"
+        echo "  pull        从 ACR 拉取镜像"
+        echo ""
+        echo "  help        显示帮助"
         ;;
     *)
         cmd_deploy "yes"

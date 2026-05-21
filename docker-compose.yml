@@ -1,27 +1,23 @@
 # ============================================================
-# IFA 上牌小助手 — Docker Compose 编排（部署端）
+# IFA 上牌小助手 — Docker Compose
 # ============================================================
-# 启动:  ./deploy.sh              # 一键 pull + up（推荐）
-#        docker compose pull && docker compose up -d
+# 启动:  ./deploy.sh              # 一键 build + up（推荐）
+#        docker compose up -d --build
 # 停止:  docker compose down
 # 日志:  docker compose logs -f lili-bot
-#
-# lili-bot 镜像来自阿里云 ACR（registry.cn-hangzhou.aliyuncs.com）
-#   构建机: docker-compose.build.yml → build → push ACR
-#   部署端: docker compose pull → up（无需 build）
-#   部署端不需要 milvus.db / hf_model_cache/，都在镜像里
-#
-# ngrok 镜像走 Docker Hub（~20MB，无需加速）
 #
 # 包含两个服务：
 #   1. lili-bot     — Flask 回调服务器（核心）
 #   2. ngrok        — 内网穿透（可选，有公网 IP 可去掉）
+#
+# ngrok 需要注册 https://ngrok.com 获取 authtoken
 # ============================================================
 
 services:
   # ── 核心服务：Lili Bot Flask 服务器 ──
   lili-bot:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${IMAGE_NAMESPACE:-ifa}/lili-bot:${IMAGE_TAG:-latest}
+    build: .
+    image: ifa-lili-bot:latest
     container_name: lili-bot
     restart: unless-stopped
     ports:
@@ -80,7 +76,6 @@ services:
       - NGROK_AUTHTOKEN=${NGROK_AUTH_TOKEN}
     networks:
       - lili-net
-    # 暴露 ngrok 的 API 端口以便查询公网地址
     ports:
       - "4040:4040"
     logging:
